@@ -1,4 +1,4 @@
-# vim:set syntax=tcl sw=2 :#
+#     vim:set syntax=tcl sw=2 :#
 
 package require count
 package require xtcl
@@ -406,6 +406,17 @@ proc ${NS}::update_dbfile {dbfile args} {
     close $fp
 
     chan puts $fout "% datetime = [clock format $now -format {%Y-%m-%dT%H:%M:%S}]"
+
+    set idx [lsearch $args "-dir"]
+    if {$idx>=0} {
+      set dirpath [lindex $args $idx+1]
+    }
+
+    if {$dirpath ni $top_dirs} {
+      write_dirstat $fout $dirpath
+      chan puts $fout "% datetime = [clock format $now -format {%Y-%m-%dT%H:%M:%S}]"
+    }
+
     foreach dirpath [dictget $dirstat_conf dirs ""] {
       set prefix [string index $dirpath 0]
       if {$prefix eq "-" || $prefix eq "+"} {

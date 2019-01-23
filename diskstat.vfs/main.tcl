@@ -1,3 +1,4 @@
+# vim:set syntax=tcl sw=2: #
 
 set KIT_ROOT [file dir [info script]]
 set KIT_LIB  [file join $KIT_ROOT lib]
@@ -62,9 +63,22 @@ ttrace::eval {
 
 }
 
+package require main
 
-proc main::update {dbfile args} {
-  task::update $dbfile {*}$args
+#  -description ""
+#  -example ""
+
+main update {
+  -short_description "update a single diskstat database"
+  -named_arguments_first 0
+  -args {
+    { dbfile -type string             -description "path to database file" }
+    { dir    -type string -default "" -description "disk dir path" }
+  }
+} {
+
+  set conf "-dirs $dir"
+  task::update $dbfile -dir $dir
 
   return
 
@@ -76,7 +90,14 @@ proc main::update {dbfile args} {
   tpool::get $tpool $tid
 }
 
-proc main::update_many {} {
+main update-many {
+  -short_description "update multiple diskstat database"
+  -description ""
+  -example ""
+  -named_arguments_first 0
+  -args {
+  }
+} {
   global tpool
 
   set joblist [list]
@@ -105,7 +126,32 @@ proc main::update_many {} {
   return
 }
 
-proc main::update_parallel {{cfgfile "config.tcl"}} {
+main update-config {
+  -short_description "update diskstat database listed in config file"
+  -description ""
+  -example ""
+  -named_arguments_first 0
+  -args {
+    {cfgfile -type string}
+  }
+} {
+  main::update-parallel $cfgfile
+}
+
+
+main update-many {
+  -short_description "update multiple diskstat database in parallel"
+  -description ""
+  -example ""
+  -named_arguments_first 0
+  -args {
+  }
+} {
+  lassign $argv cfgfile
+
+  if {$cfgfile eq ""} {
+    set cfgfile "config.tcl"
+  }
 
   set joblist [list]
 
@@ -144,7 +190,7 @@ proc main::update_parallel {{cfgfile "config.tcl"}} {
   return
 }
 
-proc main::debug {} {
+main debug {} {
   global tpool
 
   set tid [tpool::post $tpool {
@@ -155,55 +201,59 @@ proc main::debug {} {
   tpool::get $tpool $tid
 }
 
+main "decode" {
+  -args {
+    {dbfile -multiple -description "dbfile1 dbfile2 ..."}
+  }
+} {
+  foreach item $dbfile {
+    dirstat::decode $item
+  }
+}
+
+main "bigfile" {
+  -args {
+    {argv -multiple -description "arguments"}
+  }
+} {
+  set ::argv $argv
+  uplevel #0 source $::KIT_ROOT/main/bigfile.tcl
+}
+
+main "readdir" {
+  -args {
+    {dir -type string -description "disk dir"}
+  }
+} {
+  puts [diskit::readdir $dir]
+}
+
+main "statvfs" {
+  -args {
+    {dir -type string -description "disk dir"}
+  }
+} {
+    puts [diskit::statvfs $dir]
+}
+
+main "test-tclx" {} {
+  package require Tclx
+  puts "[id]"
+}
 
 
-set act_argv [lassign $::argv act]
-switch -- $act {
-  "scan" {
-  }
-  "update-config" {
-    set argv [lassign $act_argv cfgfile]
-    main::update_parallel $cfgfile
-    # main::update_many
-  }
-  "update" {
+main "update-auto" {} {
     log_info "update start ..."
     set argv [lassign $act_argv dbfile]
     if {$dbfile eq ""} {
-      main::update_parallel
+      main::update-parallel
       # main::update_many
     } else {
       main::update $dbfile {*}$argv
     }
-  }
-  "decode" {
-    foreach dbfile $act_argv {
-      dirstat::decode $dbfile
-    }
-  }
-  "bigfile" {
-    set ::argv $act_argv
-    source $KIT_ROOT/main/bigfile.tcl
-  }
-  "readdir" {
-    set argv [lassign $::argv -]
-    puts [diskit::readir {*}$::argv]
-  }
-  "statvfs" {
-    lassign $::argv - diskdir
-    puts [diskit::statvfs $diskdir]
-  }
-  "debug" {
-    main::debug
-  }
-  "tclx" {
-    package require Tclx
-    puts "[id]"
-  }
-  default {
-    puts [{*}$::argv]
-  }
 }
+
+main
 
 exit
 
