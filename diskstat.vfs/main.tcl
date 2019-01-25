@@ -6,7 +6,7 @@ set KIT_LIB  [file join $KIT_ROOT lib]
 set ::auto_path [linsert $::auto_path 0 $KIT_LIB]
 ::tcl::tm::path add $KIT_LIB
 
-package require dirstat
+package require diskstat
 
 package require Thread
 package require Ttrace
@@ -56,7 +56,7 @@ ttrace::eval "
 ttrace::eval {
 
     proc task::update {dbfile args} {
-        package require dirstat
+        package require diskstat
 
 	dirstat::update_dbfile $dbfile {*}$args
     }
@@ -73,12 +73,13 @@ main update {
   -named_arguments_first 0
   -args {
     { dbfile -type string             -description "path to database file" }
-    { dir    -type string -default "" -description "disk dir path" }
+    { -dir    -type string -default "" -description "disk dir path" }
+    { -conf   -type string -default "" -description "config" }
   }
 } {
 
   set conf "-dirs $dir"
-  task::update $dbfile -dir $dir
+  task::update $dbfile -dir $dir -conf $conf
 
   return
 
@@ -96,14 +97,15 @@ main update-many {
   -example ""
   -named_arguments_first 0
   -args {
+    {cfgfile -type string}
   }
 } {
   global tpool
 
   set joblist [list]
 
-  source $::KIT_ROOT/config.tcl
-  source ./config.tcl
+  source $cfgfile
+
   dict for {name conf} $dirstat_tasks {
     set dbfile "dirstat-$name.db"
     set tid [tpool::post $tpool [list task::update $dbfile -conf $conf]]
@@ -139,17 +141,18 @@ main update-config {
 }
 
 
-main update-many {
+main update-parallel {
   -short_description "update multiple diskstat database in parallel"
   -description ""
   -example ""
   -named_arguments_first 0
   -args {
+    {cfgfile -type string}
   }
 } {
-  lassign $argv cfgfile
 
   if {$cfgfile eq ""} {
+    # TODO:
     set cfgfile "config.tcl"
   }
 
@@ -190,11 +193,22 @@ main update-many {
   return
 }
 
+main "update-auto" {} {
+    log_info "update start ..."
+    set argv [lassign $act_argv dbfile]
+    if {$dbfile eq ""} {
+      main::update-parallel
+      # main::update_many
+    } else {
+      main::update $dbfile {*}$argv
+    }
+}
+
 main debug {} {
   global tpool
 
   set tid [tpool::post $tpool {
-    package require dirstat
+    package require diskstat
   }]
 
   tpool::wait $tpool $tid
@@ -211,21 +225,47 @@ main "decode" {
   }
 }
 
-main "bigfile" {
+main "find" {
   -args {
-    {argv -multiple -description "arguments"}
+    {dbfile -description "dbfile"}
+    {argv -multiple -default {} -description "options"}
   }
 } {
-  set ::argv $argv
+  dirstat::find $dbfile {*}$argv
+}
+
+main "bigfile" {
+  -args {
+    {dbfile  -description "dbfile"}
+    {outfile -type string  -default "" -description "output file"}
+    {-decode -type none    -description "decode input dbfile"}
+    {-sort   -type none    -description "sort output"}
+    {-size   -type integer -default 300000 -description "big file size in KB"}
+  }
+} {
+
+  array set ::kargs [list \
+    -dbfile  $dbfile \
+    -decode  $decode  \
+    -sort    $sort    \
+    -size    $size    \
+    -outfile $outfile \
+  ]
+
   uplevel #0 source $::KIT_ROOT/main/bigfile.tcl
 }
 
 main "readdir" {
   -args {
-    {dir -type string -description "disk dir"}
+    {dir   -type string -description "disk dir"}
+    {-stat -type none   -description "print stat info"}
   }
 } {
-  puts [diskit::readdir $dir]
+  if {$stat} {
+    puts [diskit::readdir -stat $dir]
+  } else {
+    puts [diskit::readdir $dir]
+  }
 }
 
 main "statvfs" {
@@ -239,18 +279,6 @@ main "statvfs" {
 main "test-tclx" {} {
   package require Tclx
   puts "[id]"
-}
-
-
-main "update-auto" {} {
-    log_info "update start ..."
-    set argv [lassign $act_argv dbfile]
-    if {$dbfile eq ""} {
-      main::update-parallel
-      # main::update_many
-    } else {
-      main::update $dbfile {*}$argv
-    }
 }
 
 main

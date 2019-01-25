@@ -2,36 +2,41 @@
 proc lstack {args} {
 }
 
-array set kargs {
-  -decode 0
-  -sort   0
-  -size   300000
-  %       ""
+if {0} {
+    array set kargs {
+      -decode 0
+      -sort   0
+      -size   300000
+      %       ""
+    }
+
+    set arg_next  0
+    set arg_skip 0
+    foreach arg $::argv {
+      incr arg_next
+      if {$arg_skip>0} {
+	incr arg_skip -1
+	continue
+      }
+
+      switch -- $arg {
+	"-decode" { set ::kargs(-decode) 1 }
+	"-sort"   { set ::kargs(-sort)   1 }
+	"-size"   {
+	  set ::kargs(-size) [lindex $::argv $arg_next]
+	  incr arg_skip 1
+	}
+	default {
+	  lappend ::kargs(%) $arg
+	}
+      }
+    }
+
+    lassign $::kargs(%) dbfile outfile
 }
 
-set arg_next  0
-set arg_skip 0
-foreach arg $::argv {
-  incr arg_next
-  if {$arg_skip>0} {
-    incr arg_skip -1
-    continue
-  }
-
-  switch -- $arg {
-    "-decode" { set ::kargs(-decode) 1 }
-    "-sort"   { set ::kargs(-sort)   1 }
-    "-size"   {
-      set ::kargs(-size) [lindex $::argv $arg_next]
-      incr arg_skip 1
-    }
-    default {
-      lappend ::kargs(%) $arg
-    }
-  }
-}
-
-lassign $::kargs(%) dbfile outfile
+set dbfile  $::kargs(-dbfile)
+set outfile $::kargs(-outfile)
 
 # if {$outfile ne ""} {
 #
@@ -40,7 +45,7 @@ lassign $::kargs(%) dbfile outfile
 set dirstat_exec $::argv0
 
 if {$::kargs(-decode)} {
-  set fpipe [open "| $dirstat_exec decode $dbfile" "r"]
+  set fpipe [open "| $dirstat_exec decode $dbfile 2>@ stderr" "r"]
 } else {
   set fpipe [open $dbfile "r"]
 }
@@ -136,6 +141,13 @@ while {[gets $fpipe line]>=0} {
 
       if {$ksize>$::kargs(-size)} {
         puts $fout [list "F" $ksize $mtime $atime [dict keys $current_marks] [file join $current_dir $fname]]
+      }
+    }
+    "G*" {
+      lassign $line - fname fcount ksize mtime atime
+
+      if {$ksize>$::kargs(-size)} {
+        puts $fout [list "G" $ksize $mtime $atime [dict keys $current_marks] [file join $current_dir "*"]]
       }
     }
     "D*" {

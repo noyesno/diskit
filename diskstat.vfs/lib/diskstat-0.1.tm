@@ -7,7 +7,7 @@ package require frcode
 package require markstack
 package require lockfile
 
-package provide dirstat 0.1
+package provide diskstat 0.1
 
 set NS dirstat
 
@@ -64,6 +64,7 @@ proc ${NS}::decode {dbfile args} {
     set lineno 0
     while {[gets $fp line]>=0} {
       incr lineno
+      try {
       switch -glob -- $line {
 	"#*" {
            set context ""
@@ -106,12 +107,17 @@ proc ${NS}::decode {dbfile args} {
 	    set fname [string range $line 2 end]
           }
 
-	  lassign [gets $fp] - ksize mtime atime size_kb
+          set next_line [gets $fp]
+	  lassign $next_line - ksize mtime atime size_kb
           incr lineno
 
-          if {$config(mtime_incr)} {
-            set mtime [expr {$dir_mtime+$mtime}]
-            set atime [expr {$mtime+$atime}]
+          try {
+            if {$config(mtime_incr)} {
+              set mtime [expr {$dir_mtime+$mtime}]
+              set atime [expr {$mtime+$atime}]
+            }
+          } on error err {
+            puts stderr "Error: $lineno $line\n $next_line {$dir_mtime+$mtime}  {$mtime+$atime}" ; exit
           }
 
 	  puts [list "F" $fname $ksize $mtime $atime]
@@ -148,6 +154,180 @@ proc ${NS}::decode {dbfile args} {
           puts $line
         }
       }
+      } on error err {
+        puts stderr "Error: $err"
+        puts stderr "       line   = $line"
+        puts stderr "       dbfile = $dbfile"
+        break
+      }
+
+    }
+    close $fp
+
+    return
+}
+
+proc ${NS}::find {dbfile args} {
+    array set kargs {
+      -type ""
+      -all  0
+      -tail 0
+      -size 0
+      -name ""
+      -path ""
+    }
+    array set kargs $args
+
+    set fp [open $dbfile]
+    chan configure $fp -buffersize [expr 4096*16]  ;# 64 KB
+
+
+    set lineno 0
+    set context(depth) 0
+    set context(dir)   ""
+
+    while {[gets $fp line]>=0} {
+      incr lineno
+      try {
+      switch -glob -- $line {
+	"#*" {
+           # set context ""
+	   continue
+	}
+	"%*" {
+           # set context ""
+           switch -- [lindex $line 1] {
+             "root" {
+               set cwd [lindex $line end]
+             }
+             "frcode" {
+               set config(frcode) 1
+             }
+             "mtime_incr" {
+               set config(mtime_incr) 1
+             }
+           }
+	   continue
+	}
+	"R *" {
+	  set dir [string range $line 2 end]
+
+          set context(depth) 0
+          set context(dir)  [file join $context(dir) $dir]
+
+          frcode::prefix [file tail $dir]
+
+	  lassign [gets $fp] - ksize mtime ztime_diff
+
+          set dir_mtime $mtime
+          set dir_ztime [expr {$mtime+$ztime_diff}]
+
+          # puts [list "R" $dir $ksize $mtime]
+	}
+	"P *" {
+          # puts $line
+          incr context(depth) -1
+          set  context(dir)   [file dir $context(dir)]
+	}
+
+	"D *" {
+          if {$config(frcode)} {
+            set idx [tcl_endOfWord $line 2]
+            set prefix_diff [string range $line 2 $idx-1]
+            set prefix_tail [string range $line $idx+1 end]
+            set dname [frcode::prefix_append $prefix_diff $prefix_tail]
+          } else {
+	    set dname [string range $line 2 end]
+          }
+
+          # incr context(depth)
+          # set  context(dir)   [file join $context(dir) $dname]
+
+          if {$kargs(-type) eq "" || "d" in $kargs(-type)} {
+	    lassign [gets $fp] - ksize mtime
+            if {$kargs(-tail)} {
+	      puts "D $dname $ksize $mtime"
+            } else {
+              set fpath [file join $context(dir) $dname]
+	      puts "D $fpath $ksize $mtime"
+            }
+          }
+	}
+
+	"F *" {
+          if {$config(frcode)} {
+            set idx [tcl_endOfWord $line 2]
+            set prefix_diff [string range $line 2 $idx-1]
+            set prefix_tail [string range $line $idx+1 end]
+            set fname [frcode::prefix_append $prefix_diff $prefix_tail]
+          } else {
+	    set fname [string range $line 2 end]
+          }
+
+          set next_line [gets $fp]
+	  lassign $next_line - ksize mtime atime size_kb
+          incr lineno
+
+          try {
+            if {$config(mtime_incr)} {
+              set mtime [expr {$dir_mtime+$mtime}]
+              set atime [expr {$mtime+$atime}]
+            }
+          } on error err {
+            puts stderr "Error: $lineno $line\n $next_line {$dir_mtime+$mtime}  {$mtime+$atime}" ; exit
+          }
+
+          set match 1
+          while 1 {
+            if {!($kargs(-size)<=0 || $ksize>=$kargs(-size))} {
+              set match 0
+              break
+            }
+            if {!($kargs(-type) eq "" || "f" in $kargs(-type))} {
+              set match 0
+              break
+            }
+            if {!($kargs(-name) eq "" || [string match $kargs(-name) $fname])} {
+              set match 0
+              break
+            }
+            break
+          }
+
+          if {$match} {
+            if {$kargs(-tail)} {
+	      puts [list "F" $fname $ksize $mtime $atime]
+            } else {
+              set fpath [file join $context(dir) $fname]
+	      puts [list "F" $fpath $ksize $mtime $atime]
+            }
+          }
+	}
+        "G*" {
+          # for a group of file, e.g. small files.
+	  set fname [string range $line 2 end]
+	  lassign [gets $fp] - count ksize mtime atime size_kb
+
+          if {$config(mtime_incr)} {
+            set mtime [expr {$dir_mtime+$mtime}]
+            set atime [expr {$mtime+$atime}]
+          }
+
+          if {$kargs(-all)} {
+            set fpath [file join $context(dir) $fname]
+	    puts "G $fpath $count $ksize $mtime $atime"
+          }
+        }
+        default {
+          # puts $line
+        }
+      }
+      } on error err {
+        puts stderr "Error: $err"
+        puts stderr "       line   = $line"
+        puts stderr "       dbfile = $dbfile"
+        break
+      }
 
     }
     close $fp
@@ -156,7 +336,6 @@ proc ${NS}::decode {dbfile args} {
 }
 
 proc ${NS}::update_dbfile {dbfile args} {
-    set depth 0
 
     set outfile $dbfile.work
 
@@ -237,6 +416,7 @@ proc ${NS}::update_dbfile {dbfile args} {
     }
 
 
+    set depth -1
     set lineno 0
     while {[gets $fp line]>=0} {
       incr lineno
@@ -279,7 +459,7 @@ proc ${NS}::update_dbfile {dbfile args} {
           set dirpath [file join $dirpath $dir]
           set context "R"
 
-          if {$depth==1} {
+          if {$depth==0} {
             lappend top_dirs $dirpath
             chan puts $fout "% [diskit::statvfs $dirpath]"
           }
@@ -412,7 +592,7 @@ proc ${NS}::update_dbfile {dbfile args} {
       set dirpath [lindex $args $idx+1]
     }
 
-    if {$dirpath ni $top_dirs} {
+    if {$dirpath ne "" && $dirpath ni $top_dirs} {
       write_dirstat $fout $dirpath
       chan puts $fout "% datetime = [clock format $now -format {%Y-%m-%dT%H:%M:%S}]"
     }
@@ -575,7 +755,7 @@ proc ${NS}::update_dirstat {dirpath dirstat_cache} {
 
   set depth [dict get $dirstat_cache depth]
 
-  if {$depth > 1 && ![dict exist $dirstat_cache pdirstat dir [file tail $dirpath]]} {
+  if {$depth > 0 && ![dict exist $dirstat_cache pdirstat dir [file tail $dirpath]]} {
     markstack::mark "skip"
     return $dirstat_cache
   }
@@ -593,7 +773,7 @@ proc ${NS}::update_dirstat {dirpath dirstat_cache} {
     if { $dir_mtime==0 } {
       set do_update 9
       break
-    } elseif {$depth <= 4} {
+    } elseif {$depth <= 5} {
       # TODO: make '4' a config
       try {
         file lstat $dirpath dirpath_stat
@@ -749,7 +929,7 @@ proc ${NS}::print_dirstat {fout dirpath dirstat} {
 
 
 
-  if {$dir_depth == 1} {
+  if {$dir_depth == 0} {
     chan puts $fout [format "R %s" $dirpath]
   } else {
     chan puts $fout [format "R %s" [file tail $dirpath]]

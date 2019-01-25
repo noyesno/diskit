@@ -21,7 +21,7 @@ proc main {args} {
       if {[info commands $main] eq ""} {
         set main ::main::help
       }
-      return [uplevel #0 $main {*}$argv]
+      return [uplevel #0 $main $argv]
     }
     3 {
       set args [lassign $args name]
