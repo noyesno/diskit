@@ -1,4 +1,4 @@
-#     vim:set syntax=tcl sw=2 :#
+# vim:set syntax=tcl sw=2 :#
 
 package require count
 package require xtcl
@@ -173,113 +173,39 @@ proc ${NS}::find {dbfile args} {
       -all  0
       -tail 0
       -size 0
+      -step 0
       -name ""
       -path ""
+      -yield 0
     }
     array set kargs $args
 
-    set fp [open $dbfile]
-    chan configure $fp -buffersize [expr 4096*16]  ;# 64 KB
+    package require cardfile
 
+    CardFile create diskcard
 
-    set lineno 0
-    set context(depth) 0
-    set context(dir)   ""
+    diskcard open $dbfile
 
-    while {[gets $fp line]>=0} {
-      incr lineno
-      try {
-      switch -glob -- $line {
-	"#*" {
-           # set context ""
-	   continue
-	}
-	"%*" {
-           # set context ""
-           switch -- [lindex $line 1] {
-             "root" {
-               set cwd [lindex $line end]
-             }
-             "frcode" {
-               set config(frcode) 1
-             }
-             "mtime_incr" {
-               set config(mtime_incr) 1
-             }
-           }
-	   continue
-	}
-	"R *" {
-	  set dir [string range $line 2 end]
+    if {$kargs(-yield)} yield
 
-          set context(depth) 0
-          set context(dir)  [file join $context(dir) $dir]
+    array set card [list -frcode 1 -dir "" -mtime-incr 1 atime 0]
 
-          frcode::prefix [file tail $dir]
-
-	  lassign [gets $fp] - ksize mtime ztime_diff
-
-          set dir_mtime $mtime
-          set dir_ztime [expr {$mtime+$ztime_diff}]
-
-          # puts [list "R" $dir $ksize $mtime]
-	}
-	"P *" {
-          # puts $line
-          incr context(depth) -1
-          set  context(dir)   [file dir $context(dir)]
-	}
-
-	"D *" {
-          if {$config(frcode)} {
-            set idx [tcl_endOfWord $line 2]
-            set prefix_diff [string range $line 2 $idx-1]
-            set prefix_tail [string range $line $idx+1 end]
-            set dname [frcode::prefix_append $prefix_diff $prefix_tail]
-          } else {
-	    set dname [string range $line 2 end]
-          }
-
-          # incr context(depth)
-          # set  context(dir)   [file join $context(dir) $dname]
-
-          if {$kargs(-type) eq "" || "d" in $kargs(-type)} {
-	    lassign [gets $fp] - ksize mtime
-            if {$kargs(-tail)} {
-	      puts "D $dname $ksize $mtime"
-            } else {
-              set fpath [file join $context(dir) $dname]
-	      puts "D $fpath $ksize $mtime"
-            }
-          }
-	}
-
-	"F *" {
-          if {$config(frcode)} {
-            set idx [tcl_endOfWord $line 2]
-            set prefix_diff [string range $line 2 $idx-1]
-            set prefix_tail [string range $line $idx+1 end]
-            set fname [frcode::prefix_append $prefix_diff $prefix_tail]
-          } else {
-	    set fname [string range $line 2 end]
-          }
-
-          set next_line [gets $fp]
-	  lassign $next_line - ksize mtime atime size_kb
-          incr lineno
-
-          try {
-            if {$config(mtime_incr)} {
-              set mtime [expr {$dir_mtime+$mtime}]
-              set atime [expr {$mtime+$atime}]
-            }
-          } on error err {
-            puts stderr "Error: $lineno $line\n $next_line {$dir_mtime+$mtime}  {$mtime+$atime}" ; exit
-          }
+    while {[diskcard next_card card]} {
 
           set match 1
+
           while 1 {
-            if {!($kargs(-size)<=0 || $ksize>=$kargs(-size))} {
+            if { $card(-type) in "% ."} {
+              set match 0
+              break
+            }
+
+            if { !$kargs(-step) && $card(-type) in "R P"} {
+              set match 0
+              break
+            }
+
+            if {!($kargs(-size)<=0 || $card(ksize)>=$kargs(-size))} {
               set match 0
               break
             }
@@ -287,51 +213,33 @@ proc ${NS}::find {dbfile args} {
               set match 0
               break
             }
-            if {!($kargs(-name) eq "" || [string match $kargs(-name) $fname])} {
+            if {!($kargs(-name) eq "" || [string match $kargs(-name) $card(name)])} {
               set match 0
               break
             }
+            if { !$kargs(-all) && $card(-type) eq "G" } {
+              set match 0
+              break
+            }
+
             break
           }
 
-          if {$match} {
+          if {!$match} continue
+
+          if {$kargs(-yield)} {
+            yield [list $card(-type) $card(name) $card(ksize) $card(mtime) $card(atime)]
+          } else {
             if {$kargs(-tail)} {
-	      puts [list "F" $fname $ksize $mtime $atime]
+	      puts [list $card(-type) $card(name) $card(ksize) $card(mtime) $card(atime)]
             } else {
-              set fpath [file join $context(dir) $fname]
-	      puts [list "F" $fpath $ksize $mtime $atime]
+              set fpath [file join $card(-dir) $card(name)]
+	      puts [list $card(-type) $fpath $card(ksize) $card(mtime) $card(atime)]
             }
           }
-	}
-        "G*" {
-          # for a group of file, e.g. small files.
-	  set fname [string range $line 2 end]
-	  lassign [gets $fp] - count ksize mtime atime size_kb
-
-          if {$config(mtime_incr)} {
-            set mtime [expr {$dir_mtime+$mtime}]
-            set atime [expr {$mtime+$atime}]
-          }
-
-          if {$kargs(-all)} {
-            set fpath [file join $context(dir) $fname]
-	    puts "G $fpath $count $ksize $mtime $atime"
-          }
-        }
-        default {
-          # puts $line
-        }
-      }
-      } on error err {
-        puts stderr "Error: $err"
-        puts stderr "       line   = $line"
-        puts stderr "       dbfile = $dbfile"
-        break
-      }
-
     }
-    close $fp
 
+    diskcard close
     return
 }
 
@@ -1097,7 +1005,6 @@ proc ${NS}::write_dirstat {fout dirpath {depth 1}} {
 
   return
 }
-
 
 proc ${NS}::write_dbfile {dirpath outfile} {
   set fout [open $outfile "wb"]
