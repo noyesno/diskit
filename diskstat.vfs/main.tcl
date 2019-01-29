@@ -72,13 +72,20 @@ main update {
   -short_description "update a single diskstat database"
   -named_arguments_first 0
   -args {
-    { dbfile -type string             -description "path to database file" }
-    { -dir    -type string -default "" -description "disk dir path" }
-    { -conf   -type string -default "" -description "config" }
+    { dbfile   -type string             -description "path to database file" }
+    { -dir     -type string -default "" -description "disk dir path" }
+    { -conf    -type text   -default "" -description "config" }
+    { -cfgfile -type string -default "" -description "config file" }
+    { -disk    -type string -default "" -description "disk" }
   }
 } {
 
   set conf "-dirs $dir"
+  if {$cfgfile ne ""} {
+    source $cfgfile
+    set conf [dict get $dirstat_tasks $disk]
+  }
+
   task::update $dbfile -dir $dir -conf $conf
 
   return
@@ -169,7 +176,7 @@ main update-parallel {
   dict for {name conf} $dirstat_tasks {
     set dbfile "dirstat-$name.db"
 
-    set command [list tclkit $::argv0 update $dbfile -conf $conf]
+    set command [list tclkit $::argv0 update $dbfile -conf $conf -cfgfile $cfgfile -disk $name]
     set tid [parallel::post $tpool $command]
     lappend joblist $tid
     puts stderr "process $tid for $dbfile"

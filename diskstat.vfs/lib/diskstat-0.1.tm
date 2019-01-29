@@ -176,7 +176,10 @@ proc ${NS}::find {dbfile args} {
       -step 0
       -name ""
       -path ""
+      -maxdepth 0
+      -mindepth 0
       -yield 0
+      -yieldto ""
     }
     array set kargs $args
 
@@ -186,7 +189,9 @@ proc ${NS}::find {dbfile args} {
 
     diskcard open $dbfile
 
-    if {$kargs(-yield)} yield
+    if {$kargs(-yield)} {
+      set kargs(-yieldto) [yield]
+    }
 
     array set card [list -frcode 1 -dir "" -mtime-incr 1 atime 0]
 
@@ -195,6 +200,14 @@ proc ${NS}::find {dbfile args} {
           set match 1
 
           while 1 {
+            if { $kargs(-maxdepth)>0 && $card(-depth) > $kargs(-maxdepth) } {
+              set match 0
+              break
+            }
+            if { $kargs(-mindepth)>0 && $card(-depth) < $kargs(-maxdepth) } {
+              set match 0
+              break
+            }
             if { $card(-type) in "% ."} {
               set match 0
               break
@@ -209,11 +222,15 @@ proc ${NS}::find {dbfile args} {
               set match 0
               break
             }
-            if {!($kargs(-type) eq "" || "f" in $kargs(-type))} {
+            if {!($kargs(-type) eq "" || $card(-type) in $kargs(-type))} {
               set match 0
               break
             }
             if {!($kargs(-name) eq "" || [string match $kargs(-name) $card(name)])} {
+              set match 0
+              break
+            }
+            if {!($kargs(-path) eq "" || [string match $kargs(-path) [file join $card(-dir) $card(name)]])} {
               set match 0
               break
             }
@@ -227,7 +244,9 @@ proc ${NS}::find {dbfile args} {
 
           if {!$match} continue
 
-          if {$kargs(-yield)} {
+          if {$kargs(-yieldto) ne ""} {
+            yieldto $kargs(-yieldto) $card(-type) $card(name) $card(ksize) $card(mtime) $card(atime)
+          } elseif {$kargs(-yield)} {
             yield [list $card(-type) $card(name) $card(ksize) $card(mtime) $card(atime)]
           } else {
             if {$kargs(-tail)} {
@@ -258,6 +277,7 @@ proc ${NS}::update_dbfile {dbfile args} {
 
     set force_update [expr {"-force" in $args}]
 
+    log "debug: args = $args"
 
     if {$force_update} {
       unlock $dbfile
@@ -988,7 +1008,7 @@ proc ${NS}::print_dirstat {fout dirpath dirstat} {
   return $offset
 }
 
-proc ${NS}::write_dirstat {fout dirpath {depth 1}} {
+proc ${NS}::write_dirstat {fout dirpath {depth 0}} {
 
   markstack::push $dirpath {}
 
