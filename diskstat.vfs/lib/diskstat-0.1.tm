@@ -122,7 +122,8 @@ proc ${NS}::decode {dbfile args} {
 
 	  puts [list "F" $fname $ksize $mtime $atime]
 	}
-        "G*" {
+        "G*" -
+        "X*" {
           # for a group of file, e.g. small files.
 	  set fname [string range $line 2 end]
 	  lassign [gets $fp] - count ksize mtime atime size_kb
@@ -132,7 +133,7 @@ proc ${NS}::decode {dbfile args} {
             set atime [expr {$mtime+$atime}]
           }
 
-	  puts "G $fname $count $ksize $mtime $atime"
+	  puts "X $fname $count $ksize $mtime $atime"
         }
 	"D *" {
           if {$config(frcode)} {
@@ -234,7 +235,7 @@ proc ${NS}::find {dbfile args} {
               set match 0
               break
             }
-            if { !$kargs(-all) && $card(-type) eq "G" } {
+            if { !$kargs(-all) && $card(-type) eq "X" } {
               set match 0
               break
             }
@@ -262,6 +263,21 @@ proc ${NS}::find {dbfile args} {
     return
 }
 
+
+proc ${NS}::dirstat {act args} {
+  if {$act eq "new"} {
+    set dirstat {
+	depth 0 line 0
+	stat {ksize 0 mtime 0 readable 1}
+	file "" dir "" xfile "" ztime 0
+    }
+    foreach {name value} $args {
+      dict set dirstat $name $value
+    }
+    return $dirstat
+  }
+}
+
 proc ${NS}::update_dbfile {dbfile args} {
 
     set outfile $dbfile.work
@@ -271,7 +287,7 @@ proc ${NS}::update_dbfile {dbfile args} {
     set context ""
     set cwd     ""
     set dirpath ""
-    set dirstat_conf ""
+    set dirstat_conf [dict create dirs {}]
 
     log open $outfile.log
 
@@ -304,7 +320,8 @@ proc ${NS}::update_dbfile {dbfile args} {
 
     set idx [lsearch $args "-conf"]
     if {$idx>=0} {
-      set dirstat_conf [lindex $args $idx+1]
+      puts "set dirstat_conf dict merge $dirstat_conf [lindex $args $idx+1]"
+      set dirstat_conf [dict merge $dirstat_conf [lindex $args $idx+1]]
     }
 
     set idx [lsearch $args "-include"]
@@ -395,63 +412,10 @@ proc ${NS}::update_dbfile {dbfile args} {
           set p_dirstat [markstack::cget dirstat]
           markstack::push $dir {}
 
-	  set dirstat_cache [dict create depth 0 line $lineno stat "" file "" dir ""]
+          set dirstat_cache [dirstat new line $lineno depth $depth ztime $dir_ztime]
 	  dict set dirstat_cache stat ksize $ksize
 	  dict set dirstat_cache stat mtime $dir_mtime
-	  dict set dirstat_cache ztime $dir_ztime
-	  dict set dirstat_cache depth $depth
 	  dict set dirstat_cache pdirstat $p_dirstat
-	}
-	"F *" {
-          if {$config(frcode)} {
-            set idx [tcl_endOfWord $line 2]
-            set prefix_diff [string range $line 2 $idx-1]
-            set prefix_tail [string range $line $idx+1 end]
-            set fname [frcode::prefix_append $prefix_diff $prefix_tail]
-          } else {
-	    set fname [string range $line 2 end]
-          }
-
-	  lassign [gets $fp] - ksize mtime atime size_kb
-          incr lineno
-
-          if {$config(mtime_incr)} {
-            set mtime [expr {$dir_mtime+$mtime}]
-            set atime [expr {$mtime+$atime}]
-          }
-
-	  dict set dirstat_cache file $fname "ksize $ksize size_kb $size_kb mtime $mtime atime $atime"
-	}
-        "G*" {
-          # for a group of file, e.g. small files.
-	  set fname [string range $line 2 end]
-	  lassign [gets $fp] - count ksize mtime atime size_kb
-
-          if {$config(mtime_incr)} {
-            set mtime [expr {$dir_mtime+$mtime}]
-            set atime [expr {$mtime+$atime}]
-          }
-
-	  dict set dirstat_cache gfile $fname "ksize $ksize size_kb $size_kb mtime $mtime atime $atime count $count"
-        }
-	"D *" {
-          if {$config(frcode)} {
-            set idx [tcl_endOfWord $line 2]
-            set prefix_diff [string range $line 2 $idx-1]
-            set prefix_tail [string range $line $idx+1 end]
-            set dname [frcode::prefix_append $prefix_diff $prefix_tail]
-          } else {
-	    set dname [string range $line 2 end]
-          }
-
-	  lassign [gets $fp] - ksize mtime
-          incr lineno
-
-          if {$config(mtime_incr)} {
-            set mtime [expr {$dir_mtime+$mtime}]
-          }
-
-	  dict set dirstat_cache dir $dname "ksize $ksize mtime $mtime"
 	}
 	"P *" {
           if {$context eq "R"} {
@@ -484,6 +448,58 @@ proc ${NS}::update_dbfile {dbfile args} {
 
           markstack::pop
 
+	}
+	"F *" {
+          if {$config(frcode)} {
+            set idx [tcl_endOfWord $line 2]
+            set prefix_diff [string range $line 2 $idx-1]
+            set prefix_tail [string range $line $idx+1 end]
+            set fname [frcode::prefix_append $prefix_diff $prefix_tail]
+          } else {
+	    set fname [string range $line 2 end]
+          }
+
+	  lassign [gets $fp] - ksize mtime atime size_kb
+          incr lineno
+
+          if {$config(mtime_incr)} {
+            set mtime [expr {$dir_mtime+$mtime}]
+            set atime [expr {$mtime+$atime}]
+          }
+
+	  dict set dirstat_cache file $fname "ksize $ksize size_kb $size_kb mtime $mtime atime $atime"
+	}
+        "G*" -
+        "X*" {
+          # for a group of file, e.g. small files.
+	  set fname [string range $line 2 end]
+	  lassign [gets $fp] - count ksize mtime atime size_kb
+
+          if {$config(mtime_incr)} {
+            set mtime [expr {$dir_mtime+$mtime}]
+            set atime [expr {$mtime+$atime}]
+          }
+
+	  dict set dirstat_cache xfile $fname "ksize $ksize size_kb $size_kb mtime $mtime atime $atime count $count"
+        }
+	"D *" {
+          if {$config(frcode)} {
+            set idx [tcl_endOfWord $line 2]
+            set prefix_diff [string range $line 2 $idx-1]
+            set prefix_tail [string range $line $idx+1 end]
+            set dname [frcode::prefix_append $prefix_diff $prefix_tail]
+          } else {
+	    set dname [string range $line 2 end]
+          }
+
+	  lassign [gets $fp] - ksize mtime
+          incr lineno
+
+          if {$config(mtime_incr)} {
+            set mtime [expr {$dir_mtime+$mtime}]
+          }
+
+	  dict set dirstat_cache dir $dname "ksize $ksize mtime $mtime"
 	}
         ".*" -
 	"" {
@@ -525,7 +541,7 @@ proc ${NS}::update_dbfile {dbfile args} {
       chan puts $fout "% datetime = [clock format $now -format {%Y-%m-%dT%H:%M:%S}]"
     }
 
-    foreach dirpath [dictget $dirstat_conf dirs ""] {
+    foreach dirpath [dict get $dirstat_conf dirs] {
       set prefix [string index $dirpath 0]
       if {$prefix eq "-" || $prefix eq "+"} {
         set dirpath [string range $dirpath 1 end]
@@ -566,16 +582,15 @@ proc ${NS}::update_dbfile {dbfile args} {
 # proc dirstat_readdir {dirpath dirstat_cache {statvar ""}} {}
 proc ${NS}::readdir {dirpath {statvar ""}} {
 
-  set dirstat [dict create stat "" file "" dir ""]
-
-
   if {![file exist $dirpath]} {
-    return $dirstat
+    return ""
   }
 
+  set dirstat [dirstat new]
 
   try {
     count::incr count_readdir 1
+    # log "readdir -stat $dirpath"
     set dir_entries ""
     set dir_entries [diskit::readdir -stat $dirpath]
     set dir_entries [lsort -stride 2 -index 0 $dir_entries]
@@ -583,7 +598,7 @@ proc ${NS}::readdir {dirpath {statvar ""}} {
     # puts "..."
     # return $dirstat
     # TODO: check not exist || permission denied
-    dict set dirstat stat "readable" 0
+    dict set dirstat stat readable 0
   }
 
   dict set dirstat ztime [clock seconds]
@@ -634,9 +649,8 @@ proc ${NS}::readdir {dirpath {statvar ""}} {
       "xfile" {
         dict set dirstat xfile $fname ""
       }
-    }
-  }
-
+    } ;# end switch
+  } ;# end foreach
 
   return $dirstat
 }
@@ -675,6 +689,160 @@ proc ${NS}::globdir {dirpath} {
   }
 }
 
+proc ${NS}::check_dirstat {dirstat_cache dirpath &reason} {
+  upvar ${&reason} reason
+  set reason ""
+
+  set do_update 0
+
+  set depth     [dict get $dirstat_cache depth]
+  set dir_mtime [dict get $dirstat_cache stat mtime]
+  set dir_ztime [dict get $dirstat_cache ztime ]
+
+  array set dirpath_stat ""
+
+  if { $dir_mtime==0 } {
+    # if dir mtime==0, the dir is not visisted
+    set do_update 9
+    set reason "mtime unset"
+    return $do_update
+  } elseif {$depth <= 5} {
+    # Always check top N level of directories
+    # TODO: make '4' a config
+    try {
+      file lstat $dirpath dirpath_stat
+      if {max($dirpath_stat(mtime),$dirpath_stat(ctime)) != $dir_mtime} {
+	set do_update 1
+        set reason "mtime diff"
+        return $do_update
+      }
+    } trap {POSIX ENOENT} {} {
+      # ENOENT = Not Exist
+      set do_update -1
+      set reason "not exist"
+      return $do_update
+    }
+  }
+
+  # Check dir existance is relative high cost.
+  # We can defer this check, unless
+  #   1. see "big" files which is missing.
+  #   2. mtime decay reach a limit.
+  if {0} {
+    set is_dir [file isdir $dirpath]
+    if {!$is_dir} {
+      set do_update -1
+      return $do_update
+    }
+  }
+
+  set sum_ksize 0
+  set max_mtime 0
+
+  # If we see "big" file in this dir, check its existance.
+  # If it was deleted, try to update or skip current dir, depending on whether current dir exist.
+  # "big" = file size > 100M ~= 128 = 2^7
+  set ksize_limit [expr {1024*100}]
+  dict for {fname fstat_cache} [dict get $dirstat_cache file] {
+    set ksize      [dict get $fstat_cache ksize]
+    set mtime      [dict get $fstat_cache mtime]
+    set atime      [dict get $fstat_cache atime]
+
+    incr sum_ksize $ksize
+    incr max_mtime [expr {max($max_mtime, $mtime)}]
+
+    # TODO: e
+    if { $ksize > $ksize_limit } {
+      count::incr count_fstat 1
+      try {
+	file lstat [file join $dirpath $fname] fstat
+	#TODO: dict set $dirstat file $fname "..."
+      } trap {POSIX ENOENT} {} {
+	# ENOENT = Not Exist
+        set is_dir [file isdir $dirpath]
+        if {$is_dir} {
+          set reason "big file missing $fname"
+	  set do_update 1
+          # TODO: It's common to see big file, so decide update dir only
+          # because a signle big file is not smart.
+	  # return $do_update
+        } else {
+          set reason "big file dir missing"
+	  set do_update -1
+	  return $do_update
+        }
+      } on error {err erropts} {
+	#
+      }
+    }
+  }
+
+  # TODO: check xfile
+  # dict for {fname fstat_cache} [dict get $dirstat_cache xfile] {
+  # }
+
+
+  if {$do_update < 0} {
+    return $do_update
+  }
+
+  # Check mtime Exponential Decay
+
+  # gnuplot:  ratio_ztime = 0.03 , ratio_mtime = 0.04
+  # plot  1-exp(-ratio_mtime*x) with points lc "blue",  1-exp(-ratio_mtime*x*60*exp(-12*ratio_ztime)), 1-exp(-ratio_mtime*x*60*exp(-48*ratio_ztime)), 1-exp(-ratio_mtime*x*60*exp(-72*ratio_ztime)), 1-exp(-ratio_mtime*x*60*exp(-24*4*ratio_ztime))
+
+  if {0} {
+    # chance of file changed since ztime
+    set ratio_mtime 0.05  ;# 0.04
+    set ratio_ztime 0.08  ;# 0.03
+    set p_threshold 0.8
+    set now [clock seconds]
+    set ratio_mtime [expr {$ratio_mtime*exp(-($dir_ztime-$dir_mtime)/3600*$ratio_ztime)}]
+    set p [expr {1-exp(-($now - $dir_ztime)/60*$ratio_mtime)}]
+    #set t [expr {-log(1-$p_threshold)/$ratio_mtime}]
+
+    set ztime_diff [expr {($now-$dir_ztime)}]
+    if {$p > $p_threshold} {
+      # > 30 minutes. TODO: make this hyper parameter
+      if { $ztime_diff > 60*30 } {
+	set do_update 1
+	return $do_update
+      }
+    } else {
+      # > 24 hours. TODO: make this hyper parameter
+      if { $ztime_diff > 3600*24 } {
+	set do_update 1
+	return $do_update
+      }
+    }
+  }
+
+  # 1-exp(-x*0.02*3*exp(-100*0.01))
+
+  set ratio_ztime_hour 0.02
+  set ztime_diff_max   [expr {3600*24*1}]  ;# 24 hours
+  set ztime_diff_min   [expr {60*30}]      ;# 30 minutes
+
+
+  if {$sum_ksize < (1024*10)} {
+    # set do_update 0
+    set ratio_ztime_hour 0.04
+    set ztime_diff_max   [expr {3600*24*2}]  ;# 48 hours
+    set ztime_diff_min   [expr {3600*4}]     ;#  4 hours
+  }
+
+  set p [expr {1-exp(-$ratio_ztime_hour*($dir_ztime - $dir_mtime)/3600)}]
+  set ztime_diff [expr {max($p*$ztime_diff_max, $ztime_diff_min)}]
+
+  set now [clock seconds]
+  if {($now-$dir_ztime) > $ztime_diff} {
+    set reason "mtime decay"
+    set do_update 1
+  }
+
+  return $do_update
+}
+
 proc ${NS}::update_dirstat {dirpath dirstat_cache} {
 
   if { [markstack::has skip] } {
@@ -689,142 +857,20 @@ proc ${NS}::update_dirstat {dirpath dirstat_cache} {
   }
 
 
-  set dir_mtime [dictget $dirstat_cache stat mtime 0]
-  set dir_ztime [dictget $dirstat_cache ztime $dir_mtime]
-
-  set do_update 0
-
-
-  foreach - 1 {
-    array set dirpath_stat ""
-
-    if { $dir_mtime==0 } {
-      set do_update 9
-      break
-    } elseif {$depth <= 5} {
-      # TODO: make '4' a config
-      try {
-        file lstat $dirpath dirpath_stat
-        if {max($dirpath_stat(mtime),$dirpath_stat(ctime)) != $dir_mtime} {
-          set do_update 1
-          break
-        }
-      } trap {POSIX ENOENT} {} {
-        set do_update -1
-      }
-    } elseif {0} {
-      # set do_update 1
-    }
-
-    set sum_ksize 0
-    set max_mtime 0
-
-    dict for {fname fstat_cache} [dict get $dirstat_cache file] {
-      set ksize      [dictget $fstat_cache ksize 0]
-      set mtime      [dictget $fstat_cache mtime]
-      set atime      [dictget $fstat_cache atime]
-
-      incr sum_ksize $ksize
-      incr max_mtime [expr {max($max_mtime, $mtime)}]
-
-      # TODO: make 1024*100 (100 M) a config item
-      if { $ksize > (1024*100) } {
-        count::incr count_fstat 1
-        try {
-          file lstat [file join $dirpath $fname] fstat
-          #TODO: dict set $dirstat file $fname "..."
-        } trap {POSIX ENOENT} {} {
-          # not exist
-
-          if {[file exist $dirpath]} {
-            set do_update 1
-          } else {
-            set do_update -1
-            break
-          }
-        } on error {err erropts} {
-          #
-        }
-      }
-    }
-
-    # TODO:
-    # dict for {fname fstat_cache} [dict get $dirstat_cache gfile] {
-    # }
-
-
-    if {$do_update < 0} break
-
-    # gnuplot:  ratio_ztime = 0.03 , ratio_mtime = 0.04
-    # plot  1-exp(-ratio_mtime*x) with points lc "blue",  1-exp(-ratio_mtime*x*60*exp(-12*ratio_ztime)), 1-exp(-ratio_mtime*x*60*exp(-48*ratio_ztime)), 1-exp(-ratio_mtime*x*60*exp(-72*ratio_ztime)), 1-exp(-ratio_mtime*x*60*exp(-24*4*ratio_ztime))
-
-    if {0} {
-      # chance of file changed since ztime
-      set ratio_mtime 0.05  ;# 0.04
-      set ratio_ztime 0.08  ;# 0.03
-      set p_threshold 0.8
-      set now [clock seconds]
-      set ratio_mtime [expr {$ratio_mtime*exp(-($dir_ztime-$dir_mtime)/3600*$ratio_ztime)}]
-      set p [expr {1-exp(-($now - $dir_ztime)/60*$ratio_mtime)}]
-      #set t [expr {-log(1-$p_threshold)/$ratio_mtime}]
-
-      set ztime_diff [expr {($now-$dir_ztime)}]
-      if {$p > $p_threshold} {
-        # > 30 minutes. TODO: make this hyper parameter
-        if { $ztime_diff > 60*30 } {
-          set do_update 1
-          break
-        }
-      } else {
-        # > 24 hours. TODO: make this hyper parameter
-        if { $ztime_diff > 3600*24 } {
-          set do_update 1
-          break
-        }
-      }
-    }
-
-    # 1-exp(-x*0.02*3*exp(-100*0.01))
-
-    set ratio_ztime_hour 0.02
-    set ztime_diff_max   [expr {3600*24*1}]  ;# 24 hours
-    set ztime_diff_min   [expr {60*30}]      ;# 30 minutes
-
-
-    if {$sum_ksize < (1024*10)} {
-      # set do_update 0
-      set ratio_ztime_hour 0.04
-      set ztime_diff_max   [expr {3600*24*2}]  ;# 48 hours
-      set ztime_diff_min   [expr {3600*4}]     ;#  4 hours
-    }
-
-    set p [expr {1-exp(-$ratio_ztime_hour*($dir_ztime - $dir_mtime)/3600)}]
-    set ztime_diff [expr {max($p*$ztime_diff_max, $ztime_diff_min)}]
-
-    set now [clock seconds]
-    if {($now-$dir_ztime) > $ztime_diff} {
-      set do_update 1
-      break
-    }
-
-    break
-  }
+  set do_update [check_dirstat $dirstat_cache $dirpath reason]
 
   if {$do_update < 0} {
-    # puts stderr "Error: dir not exist $dirpath"
+    log "skip $dirpath # $reason"
 
     markstack::mark "skip"
     return $dirstat_cache
-  }
-
-  if {$do_update} {
+  } elseif { $do_update>0 } {
     # XXX: readdir
 
-    #log "debug: [dictget $dirstat_cache line] purge cache of $dirpath"
-
+    log "readdir -stat $dirpath # $reason"
     set dirstat [readdir $dirpath dirpath_stat]
 
-    if {[dict get $dirstat stat] eq ""} {
+    if {$dirstat eq ""} {
       log "debug: mark skip $dirpath after readdir"
       markstack::mark "skip"
       return $dirstat_cache
@@ -832,30 +878,168 @@ proc ${NS}::update_dirstat {dirpath dirstat_cache} {
 
     dict set dirstat depth $depth
   } else {
-    # puts stderr "debug: use cache of $dirpath"
+    # log "reuse $dirpath # $reason"
     set dirstat $dirstat_cache
   }
 
   dict for {dname dstat_cache} [dict get $dirstat dir] {
-    if {! [dict exist $dirstat_cache dir $dname] } {
-      dict set dirstat dir $dname update 1
+    if { ![dict exist $dirstat_cache dir $dname] } {
+      dict set dirstat dir $dname isnew 1
+    } else {
+      dict set dirstat dir $dname isnew 0
     }
   }
 
   return $dirstat
 }
 
+proc ${NS}::print_dirstat_file {fout dirstat_file} {
+  upvar sum sum
+  upvar dir_mtime dir_mtime
+  upvar dir_depth dir_depth
+
+  dict for {fname fstat_cache} $dirstat_file {
+
+    if {[dict exist $fstat_cache mtime]} {
+      # TODO
+      set ksize      [dict get $fstat_cache ksize]
+      set size_kb    [dict get $fstat_cache size_kb]
+      set mtime      [dict get $fstat_cache mtime]
+      set atime      [dict get $fstat_cache atime]
+      incr sum(file_ksize) $ksize
+      set  sum(file_mtime) [expr {max($sum(file_mtime), $mtime)}]
+      incr sum(file_count) 1
+    }
+
+    # TODO:
+    set ksize [dict get $fstat_cache ksize]
+    if {$dir_depth > 8 && $ksize ne "" && $ksize<100} {
+      # continue
+      set  size_kb    [dict get $fstat_cache size_kb]
+      set  mtime      [dict get $fstat_cache mtime]
+
+      incr sum(sfile_ksize)   $ksize
+      incr sum(sfile_size_kb) $size_kb
+      incr sum(sfile_count) 1
+      set  sum(sfile_mtime) [expr {max($sum(sfile_mtime), $mtime)}]
+
+      # XXX: skip print small files, sum them into a "xfile" group
+      continue
+    }
+
+    lassign [frcode::prefix_diff $fname] prefix_diff prefix_tail
+    chan puts $fout [format "F %d %s" $prefix_diff $prefix_tail]
+
+    # puts [format "F %s" $fname]
+    if {[dict exist $fstat_cache ztime]} {
+      # set ztime_diff [expr {$ztime-$mtime}]
+      # chan puts $fout [format "T %d" $ztime_diff]
+    }
+
+    if {[dict exist $fstat_cache mtime]} {
+      # TODO
+      set ksize      [dict get $fstat_cache ksize]
+      set size_kb    [dict get $fstat_cache size_kb]
+      set mtime      [dict get $fstat_cache mtime]
+      set atime      [dict get $fstat_cache atime]
+
+      # incr sum(file_ksize) $ksize
+      # set  sum(file_mtime) [expr {max($sum(file_mtime), $mtime)}]
+      # incr sum(file_count) 1
+
+      chan puts $fout [format "* %d %d %d %d" $ksize [expr {$mtime-$dir_mtime}] [expr {$atime-$mtime}] $size_kb]
+    } else {
+      chan puts $fout [format "*"]
+      incr sum(xfile_count) 1
+    }
+  }
+}
+
+proc ${NS}::print_dirstat_dir {fout dirstat_dir} {
+  upvar dir_mtime dir_mtime
+
+  dict for {dname dstat_cache} $dirstat_dir {
+    # TODO: this is needed if we scan new subdir
+    # if {0 && $dir_depth > 8} {
+    #   continue
+    # }
+
+    lassign [frcode::prefix_diff $dname] prefix_diff prefix_tail
+    chan puts $fout [format "D %d %s" $prefix_diff $prefix_tail]
+
+    count::incr dir_count 1
+
+    if {[dict exist $dstat_cache mtime]} {
+      # TODO
+      set ksize [dict get $dstat_cache ksize]
+      set mtime [dict get $dstat_cache mtime]
+      chan puts $fout [format "* %d %d" $ksize [expr {$mtime-$dir_mtime}]]
+    } else {
+      chan puts $fout [format "*"]
+    }
+  }
+}
+
+proc ${NS}::print_dirstat_xfile {fout dirstat_xfile} {
+  upvar sum sum
+  upvar dir_mtime dir_mtime
+
+  if {[dict size $dirstat_xfile]>0} {
+    set fname "s"
+    set ksize      [dict get $dirstat_xfile $fname ksize ]
+    set size_kb    [dict get $dirstat_xfile $fname size_kb ]
+    set mtime      [dict get $dirstat_xfile $fname mtime ]
+    set atime      [dict get $dirstat_xfile $fname atime ]
+    set count      [dict get $dirstat_xfile $fname count ]
+
+    chan puts $fout [format "X %s" $fname]
+    chan puts $fout [format "* %d %d %d %d %d" $count $ksize [expr {$mtime-$dir_mtime}] [expr {$atime-$mtime}] $size_kb]
+  } elseif {$sum(sfile_count) > 0} {
+    set fname "s"
+    set mtime    $sum(sfile_mtime)
+    set ksize    $sum(sfile_ksize)
+    set size_kb  $sum(sfile_size_kb)
+    set atime    0
+    set count    $sum(sfile_count)
+
+    chan puts $fout [format "X %s" $fname]
+    chan puts $fout [format "* %d %d %d %d %d" $count $ksize [expr {$mtime-$dir_mtime}] [expr {$atime-$mtime}] $size_kb]
+  }
+}
+
+proc ${NS}::print_dirstat_newdir {fout dirstat dirpath dir_depth} {
+
+  dict for {dname dstat_cache} [dict get $dirstat dir] {
+    if {[dict get $dstat_cache isnew]} {
+      log "+ D $dirpath/$dname"
+
+      # XXX: TODO: use stack::peak to replace pdirstat
+      # Need push sub_dirstat
+
+      set sub_dirstat [dirstat new depth $dir_depth pdirstat $dirstat]
+      set sub_dirpath [file join $dirpath $dname]
+      markstack::push $dname {}
+      set sub_dirstat [update_dirstat      $sub_dirpath $sub_dirstat]
+      # markstack::cset offset $offset
+      markstack::cset dirstat $dirstat
+
+      set sub_offset  [print_dirstat $fout $sub_dirpath $sub_dirstat]
+      chan puts $fout [format "P %d" [expr {[chan tell $fout] - $sub_offset}]]
+      chan puts $fout "*"
+      markstack::pop
+    }
+  }
+}
+
 proc ${NS}::print_dirstat {fout dirpath dirstat} {
 
   set dir_depth [dict get $dirstat depth]
-  set dir_ksize [dictget $dirstat stat ksize 0]
-  set dir_mtime [dictget $dirstat stat mtime 0]
-  set dir_ztime [dictget $dirstat ztime $dir_mtime]
-  set dir_read  [dictget $dirstat stat readable 1]
+  set dir_ksize [dict get $dirstat stat ksize]
+  set dir_mtime [dict get $dirstat stat mtime]
+  set dir_read  [dict get $dirstat stat readable]
+  set dir_ztime [dict get $dirstat ztime]
 
   set offset [chan tell $fout]
-
-
 
   if {$dir_depth == 0} {
     chan puts $fout [format "R %s" $dirpath]
@@ -876,104 +1060,9 @@ proc ${NS}::print_dirstat {fout dirpath dirstat} {
   array set sum "file_ksize 0 file_mtime 0 file_count 0 file_size_kb 0"
   array set sum "sfile_ksize 0 sfile_mtime 0 sfile_count 0 sfile_size_kb 0"
 
-  dict for {fname fstat_cache} [dict get $dirstat file] {
-
-    if {[dict exist $fstat_cache mtime]} {
-      # TODO
-      set ksize      [dictget $fstat_cache ksize]
-      set size_kb    [dictget $fstat_cache size_kb 0]
-      set mtime      [dictget $fstat_cache mtime]
-      set atime      [dictget $fstat_cache atime]
-      incr sum(file_ksize) $ksize
-      set  sum(file_mtime) [expr {max($sum(file_mtime), $mtime)}]
-      incr sum(file_count) 1
-    }
-
-    # TODO:
-    set ksize [dictget $fstat_cache ksize]
-    if {$dir_depth > 8 && $ksize ne "" && $ksize<100} {
-      # continue
-      set  size_kb    [dictget $fstat_cache size_kb 0]
-      set  mtime      [dictget $fstat_cache mtime]
-
-      incr sum(sfile_ksize)   $ksize
-      incr sum(sfile_size_kb) $size_kb
-      incr sum(sfile_count) 1
-      set  sum(sfile_mtime) [expr {max($sum(sfile_mtime), $mtime)}]
-
-      # XXX: skip print small files, sum them into a "gfile" group
-      continue
-    }
-
-    lassign [frcode::prefix_diff $fname] prefix_diff prefix_tail
-    chan puts $fout [format "F %d %s" $prefix_diff $prefix_tail]
-
-    # puts [format "F %s" $fname]
-    if {[dict exist $fstat_cache ztime]} {
-      # set ztime_diff [expr {$ztime-$mtime}]
-      # chan puts $fout [format "T %d" $ztime_diff]
-    }
-
-    if {[dict exist $fstat_cache mtime]} {
-      # TODO
-      set ksize      [dictget $fstat_cache ksize]
-      set size_kb    [dictget $fstat_cache size_kb 0]
-      set mtime      [dictget $fstat_cache mtime]
-      set atime      [dictget $fstat_cache atime]
-
-      # incr sum(file_ksize) $ksize
-      # set  sum(file_mtime) [expr {max($sum(file_mtime), $mtime)}]
-      # incr sum(file_count) 1
-
-      chan puts $fout [format "* %d %d %d %d" $ksize [expr {$mtime-$dir_mtime}] [expr {$atime-$mtime}] $size_kb]
-    } else {
-      chan puts $fout [format "*"]
-      incr sum(xfile_count) 1
-    }
-  }
-
-  if {[dict exist $dirstat gfile]} {
-    set fname "s"
-    set ksize      [dictget $dirstat gfile $fname ksize 0]
-    set size_kb    [dictget $dirstat gfile $fname size_kb 0]
-    set mtime      [dictget $dirstat gfile $fname mtime 0]
-    set atime      [dictget $dirstat gfile $fname atime 0]
-    set count      [dictget $dirstat gfile $fname count 0]
-
-    chan puts $fout [format "G %s" $fname]
-    chan puts $fout [format "* %d %d %d %d %d" $count $ksize [expr {$mtime-$dir_mtime}] [expr {$atime-$mtime}] $size_kb]
-  } elseif {$sum(sfile_count) > 0} {
-    set fname "s"
-    set mtime    $sum(sfile_mtime)
-    set ksize    $sum(sfile_ksize)
-    set size_kb  $sum(sfile_size_kb)
-    set atime    0
-    set count    $sum(sfile_count)
-
-    chan puts $fout [format "G %s" $fname]
-    chan puts $fout [format "* %d %d %d %d %d" $count $ksize [expr {$mtime-$dir_mtime}] [expr {$atime-$mtime}] $size_kb]
-  }
-
-  dict for {dname dstat_cache} [dict get $dirstat dir] {
-    # TODO: this is needed if we scan new subdir
-    if {0 && $dir_depth > 8} {
-      continue
-    }
-
-    lassign [frcode::prefix_diff $dname] prefix_diff prefix_tail
-    chan puts $fout [format "D %d %s" $prefix_diff $prefix_tail]
-
-    count::incr dir_count 1
-
-    if {[dict exist $dstat_cache mtime]} {
-      # TODO
-      set ksize [dictget $dstat_cache ksize]
-      set mtime [dictget $dstat_cache mtime]
-      chan puts $fout [format "* %d %d" $ksize [expr {$mtime-$dir_mtime}]]
-    } else {
-      chan puts $fout [format "*"]
-    }
-  }
+  print_dirstat_file  $fout [dict get $dirstat file]
+  print_dirstat_xfile $fout [dict get $dirstat xfile]
+  print_dirstat_dir   $fout [dict get $dirstat dir]
 
   if {$sum(file_count) > 0} {
     chan puts $fout [format ". %d %d %d" $sum(file_count) $sum(file_ksize) $sum(file_mtime)]
@@ -984,26 +1073,9 @@ proc ${NS}::print_dirstat {fout dirpath dirstat} {
   count::incr file_ksize $sum(file_ksize)
   count::incr file_count $sum(file_count)
 
+
   incr dir_depth
-  dict for {dname dstat_cache} [dict get $dirstat dir] {
-    if {[dictget $dstat_cache update 0]} {
-      log "+ D $dirpath/$dname"
-
-      # XXX: TODO: use stack::peak to replace pdirstat
-      # Need push sub_dirstat
-      set sub_dirstat [dict create depth $dir_depth file "" dir "" stat "" pdirstat $dirstat]
-      set sub_dirpath [file join $dirpath $dname]
-      markstack::push $dname {}
-      set sub_dirstat [update_dirstat      $sub_dirpath $sub_dirstat]
-      # markstack::cset offset $offset
-      markstack::cset dirstat $dirstat
-
-      set sub_offset  [print_dirstat $fout $sub_dirpath $sub_dirstat]
-      chan puts $fout [format "P %d" [expr {[chan tell $fout] - $sub_offset}]]
-      chan puts $fout "*"
-      markstack::pop
-    }
-  }
+  print_dirstat_newdir $fout $dirstat $dirpath $dir_depth
 
   return $offset
 }

@@ -73,8 +73,11 @@ namespace eval markstack {
   proc cget {name} {
     variable stack
 
-    # TODO:
-    return [dictget [lindex $stack end 2] $name ""]
+    set result ""
+    catch {
+      set result [dict get [lindex $stack end 2] $name]
+    }
+    return $result
   }
 
 }

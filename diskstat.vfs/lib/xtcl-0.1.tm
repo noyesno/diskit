@@ -1,6 +1,6 @@
 # vim:set syntax=tcl sw=2 :#
 
-package require xtcl
+package provide xtcl 0.1
 
 
 proc dictget {dict args} {
